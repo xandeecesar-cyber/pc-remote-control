@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>PC Remote Control</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --accent:#2f81f7; --text:#e6edf3; --muted:#8b949e; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,sans-serif; overflow:hidden; height:100vh; }
+  #setup { padding:20px; max-width:440px; margin:0 auto; }
+  h1 { font-size:20px; margin:16px 0 4px; }
+  p.sub { color:var(--muted); font-size:13px; margin:0 0 20px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:14px 0 4px; }
+  input { width:100%; padding:11px 12px; background:var(--panel); border:1px solid var(--border);
+          border-radius:8px; color:var(--text); font-size:15px; }
+  button { cursor:pointer; border:none; border-radius:8px; font-size:15px; }
+  #connectBtn { width:100%; margin-top:20px; padding:13px; background:var(--accent); color:#fff; font-weight:600; }
+  #status { margin-top:14px; font-size:13px; text-align:center; min-height:18px; }
+  .err { color:#f85149; } .ok { color:#3fb950; }
+
+  /* Tela remota */
+  #screenWrap { display:none; position:fixed; inset:0; background:#000; }
+  #screen { width:100%; height:100%; object-fit:contain; touch-action:none; display:block; }
+
+  /* Barra de ferramentas flutuante */
+  #bar { position:fixed; top:0; left:0; right:0; display:none; gap:6px; padding:6px;
+         background:rgba(13,17,23,.82); backdrop-filter:blur(8px); flex-wrap:wrap;
+         align-items:center; z-index:10; }
+  #bar button, #bar select { padding:8px 10px; background:var(--panel); color:var(--text);
+         border:1px solid var(--border); border-radius:7px; font-size:13px; }
+  #bar button.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+  #bar .spacer { flex:1; }
+
+  /* Teclado virtual */
+  #kb { position:fixed; bottom:0; left:0; right:0; display:none; padding:8px;
+        background:rgba(13,17,23,.92); backdrop-filter:blur(8px); z-index:10; }
+  #kbInput { width:100%; margin-bottom:8px; }
+  .keys { display:flex; gap:5px; flex-wrap:wrap; justify-content:center; }
+  .keys button { padding:9px 11px; background:var(--panel); color:var(--text);
+        border:1px solid var(--border); border-radius:7px; font-size:13px; }
+  .keys button.mod.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+</style>
+</head>
+<body>
+
+<div id="setup">
+  <h1>🖥️ PC Remote Control</h1>
+  <p class="sub">Controle a tela do seu PC pelo celular.</p>
+
+  <label>Endereço do servidor (WebSocket)</label>
+  <input id="url" placeholder="ws://192.168.0.10:8765" autocomplete="off" autocapitalize="off">
+
+  <label>Senha / Token</label>
+  <input id="token" type="password" placeholder="sua senha" autocomplete="off">
+
+  <button id="connectBtn">Conectar</button>
+  <div id="status"></div>
+</div>
+
+<div id="screenWrap">
+  <img id="screen" alt="tela remota">
+</div>
+
+<div id="bar">
+  <button id="modeBtn" title="Alternar toque = mouse / arrastar">👆 Toque</button>
+  <button id="rightClickBtn">🖱️ Dir.</button>
+  <button id="scrollBtn">↕️ Scroll</button>
+  <button id="kbBtn">⌨️ Teclado</button>
+  <select id="monSel" title="Monitor"></select>
+  <select id="qSel" title="Qualidade">
+    <option value="30">Baixa</option>
+    <option value="50" selected>Média</option>
+    <option value="75">Alta</option>
+    <option value="90">Máx</option>
+  </select>
+  <span class="spacer"></span>
+  <button id="fsBtn">⛶</button>
+  <button id="disBtn">✕</button>
+</div>
+
+<div id="kb">
+  <input id="kbInput" placeholder="Digite aqui e pressione Enter para enviar ao PC">
+  <div class="keys">
+    <button data-mod="ctrl" class="mod">Ctrl</button>
+    <button data-mod="alt" class="mod">Alt</button>
+    <button data-mod="shift" class="mod">Shift</button>
+    <button data-mod="cmd" class="mod">Win</button>
+    <button data-key="esc">Esc</button>
+    <button data-key="tab">Tab</button>
+    <button data-key="enter">Enter</button>
+    <button data-key="backspace">⌫</button>
+    <button data-key="delete">Del</button>
+    <button data-key="up">▲</button>
+    <button data-key="down">▼</button>
+    <button data-key="left">◀</button>
+    <button data-key="right">▶</button>
+    <button data-combo="ctrl+c">Ctrl+C</button>
+    <button data-combo="ctrl+v">Ctrl+V</button>
+    <button data-combo="alt+tab">Alt+Tab</button>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let ws = null, imgEl = $('screen');
+let mode = 'tap';            // 'tap' (clique/arrasto) ou 'scroll'
+let rightClick = false;
+let activeMods = new Set();
+
+// ---- Persistência simples (lembra último endereço) ----
+try {
+  $('url').value = localStorage.getItem('prc_url') || '';
+  $('token').value = localStorage.getItem('prc_token') || '';
+} catch(e){}
+
+function setStatus(msg, cls){ const s=$('status'); s.textContent=msg; s.className=cls||''; }
+
+$('connectBtn').onclick = () => {
+  const url = $('url').value.trim();
+  const token = $('token').value;
+  if(!url){ setStatus('Informe o endereço.', 'err'); return; }
+  try {
+    localStorage.setItem('prc_url', url);
+    localStorage.setItem('prc_token', token);
+  } catch(e){}
+  connect(url, token);
+};
+
+function connect(url, token){
+  setStatus('Conectando...');
+  try { ws = new WebSocket(url); }
+  catch(e){ setStatus('URL inválida: '+e.message, 'err'); return; }
+
+  ws.onopen = () => ws.send(JSON.stringify({t:'auth', token}));
+  ws.onerror = () => setStatus('Falha de conexão. Verifique IP/porta e se o PC e o celular estão na mesma rede.', 'err');
+  ws.onclose = () => { if($('screenWrap').style.display==='block') disconnect(); };
+
+  ws.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if(m.t==='ok'){ enterRemote(); }
+    else if(m.t==='err'){ setStatus(m.m, 'err'); ws.close(); }
+    else if(m.t==='frame'){
+      imgEl.src = 'data:image/jpeg;base64,'+m.img;
+      if(m.mons && $('monSel').options.length !== m.mons){
+        const sel=$('monSel'); sel.innerHTML='';
+        for(let i=1;i<=m.mons;i++){ const o=document.createElement('option'); o.value=i; o.textContent='Monitor '+i; sel.appendChild(o); }
+        sel.value = m.mon;
+      }
+    }
+  };
+}
+
+function enterRemote(){
+  $('setup').style.display='none';
+  $('screenWrap').style.display='block';
+  $('bar').style.display='flex';
+  setStatus('');
+}
+function disconnect(){
+  if(ws){ try{ws.close();}catch(e){} ws=null; }
+  $('screenWrap').style.display='none';
+  $('bar').style.display='none'; $('kb').style.display='none';
+  $('setup').style.display='block';
+  setStatus('Desconectado.');
+}
+
+// ---- Converte coordenada do toque -> posição normalizada na imagem ----
+function normPos(clientX, clientY){
+  const r = imgEl.getBoundingClientRect();
+  // a imagem usa object-fit:contain, então calculamos a área real da imagem
+  const ar = imgEl.naturalWidth / imgEl.naturalHeight;
+  const br = r.width / r.height;
+  let dw=r.width, dh=r.height, ox=0, oy=0;
+  if(ar > br){ dh = r.width/ar; oy=(r.height-dh)/2; }
+  else { dw = r.height*ar; ox=(r.width-dw)/2; }
+  let x=(clientX-r.left-ox)/dw, y=(clientY-r.top-oy)/dh;
+  return {x:Math.max(0,Math.min(1,x)), y:Math.max(0,Math.min(1,y))};
+}
+function send(obj){ if(ws && ws.readyState===1) ws.send(JSON.stringify(obj)); }
+
+// ---- Gestos de toque sobre a tela ----
+let startT=0, startX=0, startY=0, lastX=0, lastY=0, moved=false, dragging=false;
+imgEl.addEventListener('touchstart', e=>{
+  const t=e.touches[0]; startT=Date.now(); moved=false; dragging=false;
+  startX=lastX=t.clientX; startY=lastY=t.clientY;
+  if(mode==='tap'){
+    const p=normPos(t.clientX,t.clientY);
+    send({t:'move', x:p.x, y:p.y});
+  }
+}, {passive:false});
+
+imgEl.addEventListener('touchmove', e=>{
+  e.preventDefault();
+  const t=e.touches[0];
+  const dx=t.clientX-startX, dy=t.clientY-startY;
+  if(Math.abs(dx)>6||Math.abs(dy)>6) moved=true;
+
+  if(mode==='scroll'){
+    send({t:'scroll', dx:0, dy:(lastY-t.clientY)>0?-1:1});
+    lastY=t.clientY;
+  } else {
+    const p=normPos(t.clientX,t.clientY);
+    send({t:'move', x:p.x, y:p.y});
+    // arrasto: segurou e começou a mover -> pressiona botão
+    if(moved && !dragging && (Date.now()-startT)>120){
+      dragging=true; send({t:'down', x:p.x, y:p.y, button:'left'});
+    }
+  }
+  lastX=t.clientX; lastY=t.clientY;
+}, {passive:false});
+
+imgEl.addEventListener('touchend', e=>{
+  const p=normPos(lastX,lastY);
+  if(dragging){ send({t:'up', x:p.x, y:p.y, button:'left'}); dragging=false; return; }
+  if(mode==='scroll') return;
+  // toque curto = clique
+  if(!moved && (Date.now()-startT)<400){
+    send({t:'click', x:p.x, y:p.y, button: rightClick?'right':'left', count:1});
+    if(rightClick){ rightClick=false; $('rightClickBtn').classList.remove('active'); }
+  }
+}, {passive:false});
+
+// duplo toque = duplo clique
+let lastTap=0;
+imgEl.addEventListener('touchend', e=>{
+  const now=Date.now();
+  if(now-lastTap<300 && !moved){
+    const p=normPos(lastX,lastY);
+    send({t:'click', x:p.x, y:p.y, button:'left', count:2});
+  }
+  lastTap=now;
+});
+
+// ---- Barra ----
+$('modeBtn').onclick = () => {
+  mode = mode==='tap' ? 'scroll' : 'tap';
+  $('modeBtn').textContent = mode==='tap' ? '👆 Toque' : '↕️ Scroll';
+};
+$('scrollBtn').onclick = () => { mode='scroll'; $('modeBtn').textContent='↕️ Scroll'; };
+$('rightClickBtn').onclick = () => {
+  rightClick=!rightClick; $('rightClickBtn').classList.toggle('active', rightClick);
+};
+$('kbBtn').onclick = () => {
+  const kb=$('kb'); const show = kb.style.display!=='block';
+  kb.style.display = show?'block':'none';
+  if(show) $('kbInput').focus();
+};
+$('monSel').onchange = e => send({t:'setmon', i:+e.target.value});
+$('qSel').onchange = e => send({t:'quality', v:+e.target.value});
+$('fsBtn').onclick = () => {
+  if(!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+  else document.exitFullscreen?.();
+};
+$('disBtn').onclick = disconnect;
+
+// ---- Teclado virtual ----
+$('kbInput').addEventListener('keydown', e=>{
+  if(e.key==='Enter'){
+    const txt=$('kbInput').value;
+    if(txt) send({t:'type', text:txt});
+    send({t:'key', key:'enter', mods:[...activeMods]});
+    $('kbInput').value='';
+    e.preventDefault();
+  }
+});
+document.querySelectorAll('#kb .keys button').forEach(b=>{
+  b.onclick = () => {
+    if(b.dataset.mod){
+      const m=b.dataset.mod;
+      if(activeMods.has(m)){ activeMods.delete(m); b.classList.remove('active'); }
+      else { activeMods.add(m); b.classList.add('active'); }
+    } else if(b.dataset.key){
+      send({t:'key', key:b.dataset.key, mods:[...activeMods]});
+      clearMods();
+    } else if(b.dataset.combo){
+      const parts=b.dataset.combo.split('+');
+      const key=parts.pop();
+      send({t:'key', key, mods:parts});
+    }
+  };
+});
+function clearMods(){ activeMods.clear(); document.querySelectorAll('#kb .mod').forEach(x=>x.classList.remove('active')); }
+
+// evita zoom por duplo toque na UI
+document.addEventListener('gesturestart', e=>e.preventDefault());
+</script>
+</body>
+</html>

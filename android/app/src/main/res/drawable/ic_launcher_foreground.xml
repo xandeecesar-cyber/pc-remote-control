@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Monitor -->
+    <path android:fillColor="#2f81f7"
+        android:pathData="M30,36 h48 a4,4 0 0 1 4,4 v26 a4,4 0 0 1 -4,4 h-48 a4,4 0 0 1 -4,-4 v-26 a4,4 0 0 1 4,-4 z"/>
+    <path android:fillColor="#0d1117"
+        android:pathData="M31,41 h46 v22 h-46 z"/>
+    <!-- Base -->
+    <path android:fillColor="#2f81f7"
+        android:pathData="M48,70 h12 v4 h6 v4 h-24 v-4 h6 z"/>
+    <!-- Sinal de 'play'/controle -->
+    <path android:fillColor="#3fb950"
+        android:pathData="M48,47 l12,5 l-12,5 z"/>
+</vector>
