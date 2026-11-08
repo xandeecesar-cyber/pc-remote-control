@@ -1,6 +1,5 @@
 name: Build APK
 
-# Compila o APK na nuvem a cada push (e dá pra rodar manualmente também).
 on:
   push:
     branches: [ main, master ]
@@ -10,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Baixar o código
+      - name: Baixar o codigo
         uses: actions/checkout@v4
 
       - name: Instalar Java 17
@@ -19,10 +18,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Preparar Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Dar permissão ao gradlew
+      - name: Dar permissao ao gradlew
         working-directory: android
         run: chmod +x ./gradlew
 
